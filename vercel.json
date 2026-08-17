@@ -1,14 +1,10 @@
 {
   "version": 2,
   "functions": {
-    "api/*.py": {
-      "memory": 1024,
-      "maxDuration": 15
-    },
     "app.py": {
       "memory": 1024,
       "maxDuration": 15,
-      "excludeFiles": "{venv/**,.venv/**,*.md,*.csv}"
+      "excludeFiles": "{venv/**,.venv/**,*.md,generate_data.py}"
     }
   }
 }

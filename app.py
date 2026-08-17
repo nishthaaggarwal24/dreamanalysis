@@ -7,6 +7,19 @@ from datetime import datetime, timedelta
 import random
 import os
 
+# WSGI / Serverless Platform Entrypoint Compatibility Exports
+def handler(environ=None, start_response=None):
+    """Fallback WSGI / Serverless compatibility handler (Vercel, Gunicorn, Render, AWS Lambda)."""
+    if callable(start_response):
+        status = '200 OK'
+        headers = [('Content-type', 'text/html; charset=utf-8')]
+        start_response(status, headers)
+        return [b"<!DOCTYPE html><html><head><title>Dream Intelligence Platform V2</title></head><body><h1>Streamlit Dream Intelligence Platform V2</h1><p>Streamlit server active. Run 'streamlit run app.py' to launch interactive application.</p></body></html>"]
+    return "Streamlit Dream Intelligence Platform V2"
+
+app = handler
+application = handler
+
 # Page Configuration - Clean Typography, Zero Emojis
 st.set_page_config(
     page_title="Dream Intelligence Platform V2",

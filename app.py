@@ -7,18 +7,44 @@ from datetime import datetime, timedelta
 import random
 import os
 
-# WSGI / Serverless Platform Entrypoint Compatibility Exports
-def handler(environ=None, start_response=None):
-    """Fallback WSGI / Serverless compatibility handler (Vercel, Gunicorn, Render, AWS Lambda)."""
-    if callable(start_response):
-        status = '200 OK'
-        headers = [('Content-type', 'text/html; charset=utf-8')]
-        start_response(status, headers)
-        return [b"<!DOCTYPE html><html><head><title>Dream Intelligence Platform V2</title></head><body><h1>Streamlit Dream Intelligence Platform V2</h1><p>Streamlit server active. Run 'streamlit run app.py' to launch interactive application.</p></body></html>"]
-    return "Streamlit Dream Intelligence Platform V2"
+from http.server import BaseHTTPRequestHandler
 
-app = handler
-application = handler
+# Vercel Serverless Function Handler Compatibility
+class VercelHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        html = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Dream Intelligence Platform V2</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F7F4EC; color: #200F07; padding: 3rem 1rem; text-align: center; }
+        .card { background: #FCFAF5; border: 1px solid #E2DACB; border-radius: 12px; padding: 2.5rem; max-width: 650px; margin: 0 auto; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+        .badge { background: #E8F3CE; color: #3B5412; border: 1px solid #C2E085; padding: 0.3rem 0.75rem; border-radius: 4px; font-weight: 700; font-size: 0.75rem; text-transform: uppercase; font-family: monospace; }
+        .btn { display: inline-block; background: #C5E384; color: #200F07; padding: 0.85rem 1.75rem; font-weight: 800; border-radius: 6px; text-decoration: none; margin-top: 1.5rem; border: 1px solid #A8CD58; }
+        .btn:hover { background: #B2D669; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <span class="badge">PLATFORM V2 // SUBCONSCIOUS SIGNAL PROCESSING</span>
+        <h1 style="margin-top: 1rem; font-size: 2rem;">Dream Intelligence Platform</h1>
+        <p style="color: #5C4E43; line-height: 1.6; font-size: 1.05rem;">
+            Streamlit applications require persistent WebSocket connections to run full interactive state. Deploy on official Streamlit Community Cloud (Free 24/7 Hosting) or run locally using <code>streamlit run app.py</code>.
+        </p>
+        <a class="btn" href="https://share.streamlit.io" target="_blank">Deploy on Streamlit Cloud (1-Click Free) →</a>
+    </div>
+</body>
+</html>"""
+        self.wfile.write(html.encode('utf-8'))
+        return
+
+handler = VercelHandler
+app = VercelHandler
+application = VercelHandler
 
 # Page Configuration - Clean Typography, Zero Emojis
 st.set_page_config(

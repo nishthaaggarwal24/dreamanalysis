@@ -476,7 +476,6 @@ import re
 # ALGORITHM PIPELINE (VADER SENTIMENT, TF-IDF, COSINE SIMILARITY, K-MEANS, BERT, RANDOM FOREST)
 # ==============================================================================
 
-# 1. VADER Sentiment Analysis Engine (VADER Lexicon & Compound Score Formula)
 VADER_LEXICON = {
     'happy': 2.7, 'joy': 3.1, 'peace': 2.5, 'flying': 2.8, 'sun': 2.2, 'beautiful': 2.9, 'friend': 2.4,
     'love': 3.2, 'reunion': 2.3, 'calm': 2.1, 'hope': 2.5, 'laugh': 2.6, 'light': 2.0, 'garden': 2.1,
@@ -492,33 +491,28 @@ VADER_NEGATIONS = {'not', 'never', 'no', 'neither', 'cannot', "n't", 'without', 
 def run_vader_sentiment(text):
     tokens = re.findall(r'\b\w+\b', text.lower())
     valence_sum = 0.0
-    
+
     for i, token in enumerate(tokens):
         if token in VADER_LEXICON:
             val = VADER_LEXICON[token]
-            # Check preceding booster
             if i > 0 and tokens[i-1] in VADER_BOOSTERS:
                 val *= VADER_BOOSTERS[tokens[i-1]]
-            # Check preceding negation
             if (i > 0 and tokens[i-1] in VADER_NEGATIONS) or (i > 1 and tokens[i-2] in VADER_NEGATIONS):
                 val *= -0.75
             valence_sum += val
-            
+
     # VADER Compound Score Normalization Formula: s / sqrt(s^2 + alpha) where alpha = 15
     alpha = 15.0
-    if valence_sum == 0:
-        compound = 0.0
-    else:
-        compound = valence_sum / math.sqrt((valence_sum ** 2) + alpha)
+    compound = 0.0 if valence_sum == 0 else valence_sum / math.sqrt((valence_sum ** 2) + alpha)
     compound = round(clamp(compound, -0.99, 0.99), 2)
-    
+
     if compound >= 0.05:
         sentiment = 'Positive'
     elif compound <= -0.05:
         sentiment = 'Negative'
     else:
         sentiment = 'Neutral'
-        
+
     return sentiment, compound
 
 # 2. BERT / Transformer Multi-Class Emotion Classifier (PyTorch + Hugging Face Transformers)
@@ -531,30 +525,23 @@ def load_bert_emotion_model():
         return None
 
 def detect_bert_emotion(text, sentiment):
-    # Execute actual BERT Deep Learning Transformer Model inference
     try:
         bert_pipeline = load_bert_emotion_model()
         if bert_pipeline is not None:
-            results = bert_pipeline(text[:512])  # Forward pass through BERT Transformer
+            results = bert_pipeline(text[:512])
             if results and len(results) > 0:
                 bert_label = results[0]['label'].lower()
                 label_map = {
-                    'joy': 'Joy',
-                    'fear': 'Fear',
-                    'sadness': 'Sadness',
-                    'anger': 'Anger',
-                    'surprise': 'Surprise',
-                    'disgust': 'Disgust',
-                    'neutral': 'Neutral'
+                    'joy': 'Joy', 'fear': 'Fear', 'sadness': 'Sadness',
+                    'anger': 'Anger', 'surprise': 'Surprise', 'disgust': 'Disgust', 'neutral': 'Neutral'
                 }
                 return label_map.get(bert_label, bert_label.capitalize())
     except Exception:
         pass
 
-    # Fallback to lexicon distribution if BERT model is initializing
+    # Fallback lexicon if BERT model is still loading
     text_lower = text.lower()
     scores = {'Joy': 0, 'Fear': 0, 'Sadness': 0, 'Anger': 0, 'Surprise': 0, 'Disgust': 0}
-    
     for word in re.findall(r'\b\w+\b', text_lower):
         if word in ['flying', 'happy', 'sun', 'peace', 'joy', 'friend', 'beautiful', 'light', 'reunion', 'family', 'soar', 'smile']:
             scores['Joy'] += 2
@@ -568,20 +555,82 @@ def detect_bert_emotion(text, sentiment):
             scores['Surprise'] += 2
         elif word in ['teeth', 'decay', 'vomit', 'dirty', 'trash', 'rotten', 'sick']:
             scores['Disgust'] += 2
-            
     max_emotion = max(scores, key=scores.get)
     if scores[max_emotion] == 0:
-        if sentiment == 'Positive':
-            max_emotion = 'Joy'
-        elif sentiment == 'Negative':
-            max_emotion = 'Fear'
-        else:
-            max_emotion = 'Surprise' if any(w in text_lower for w in ['door', 'secret', 'key']) else 'Neutral'
-            
+        max_emotion = 'Joy' if sentiment == 'Positive' else ('Fear' if sentiment == 'Negative' else 'Surprise')
     return max_emotion
 
-# 3. TF-IDF & Cosine Similarity Engine
-def compute_tfidf_vector(tokens):
+# ==============================================================================
+# MODULE 1: DATA PREPROCESSING (Lowercase → Regex → Tokenize → Stopwords → Lemmatization)
+# ==============================================================================
+STOPWORDS = {
+    'i','me','my','myself','we','our','ours','ourselves','you','your','yours','yourself',
+    'yourselves','he','him','his','himself','she','her','hers','herself','it','its','itself',
+    'they','them','their','theirs','themselves','what','which','who','whom','this','that',
+    'these','those','am','is','are','was','were','be','been','being','have','has','had',
+    'having','do','does','did','doing','a','an','the','and','but','if','or','because','as',
+    'until','while','of','at','by','for','with','about','against','between','into','through',
+    'during','before','after','above','below','to','from','up','down','in','out','on','off',
+    'over','under','again','further','then','once','here','there','when','where','why','how',
+    'all','both','each','few','more','most','other','some','such','no','not','only','own',
+    'same','so','than','too','very','s','t','can','will','just','don','should','now','d',
+    'll','m','o','re','ve','y','ain','aren','couldn','didn','doesn','hadn','hasn','haven',
+    'isn','ma','mightn','mustn','needn','shan','shouldn','wasn','weren','won','wouldn'
+}
+LEMMA_RULES = {
+    'flying': 'fly', 'ran': 'run', 'running': 'run', 'fell': 'fall', 'falling': 'fall',
+    'chased': 'chase', 'chasing': 'chase', 'dreamed': 'dream', 'dreaming': 'dream',
+    'crying': 'cry', 'cried': 'cry', 'smiled': 'smile', 'smiling': 'smile',
+    'fought': 'fight', 'fighting': 'fight', 'lost': 'lose', 'losing': 'lose',
+    'walked': 'walk', 'walking': 'walk', 'climbed': 'climb', 'climbing': 'climb',
+    'saw': 'see', 'seeing': 'see', 'heard': 'hear', 'knew': 'know', 'knowing': 'know',
+    'woke': 'wake', 'waking': 'wake', 'felt': 'feel', 'feeling': 'feel',
+    'screamed': 'scream', 'screaming': 'scream', 'jumped': 'jump', 'jumping': 'jump',
+    'tried': 'try', 'trying': 'try', 'escaping': 'escape', 'escaped': 'escape',
+    'hiding': 'hide', 'hidden': 'hide', 'shining': 'shine', 'laughed': 'laugh',
+    'laughing': 'laugh', 'arguing': 'argue', 'argued': 'argue',
+}
+SUFFIX_RULES = [('ies', 'y'), ('ied', 'y'), ('ves', 'f'), ('ing', ''), ('ness', ''),
+                ('tion', ''), ('ly', ''), ('ed', ''), ('s', '')]
+
+def lemmatize(word):
+    if word in LEMMA_RULES:
+        return LEMMA_RULES[word]
+    for suffix, replacement in SUFFIX_RULES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)] + replacement
+    return word
+
+def preprocess_text(text):
+    """Full NLP preprocessing pipeline: lowercase → regex clean → tokenize → stopword removal → lemmatization"""
+    text = text.lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    tokens = re.findall(r'\b\w+\b', text)
+    tokens = [t for t in tokens if t not in STOPWORDS and len(t) > 2]
+    tokens = [lemmatize(t) for t in tokens]
+    return tokens
+
+# ==============================================================================
+# MODULE 3 & 8: FEATURE EXTRACTION — TRUE TF-IDF + COSINE SIMILARITY
+# ==============================================================================
+@st.cache_data(ttl=300)
+def build_corpus_idf(_df_hash=None):
+    """Compute IDF (Inverse Document Frequency) over the loaded dream dataset corpus"""
+    df_global = st.session_state.get('df', pd.DataFrame())
+    if df_global.empty:
+        return {}
+    dream_col = next((c for c in ['Dream', 'Dream_Text', 'dream', 'text'] if c in df_global.columns), None)
+    if dream_col is None:
+        return {}
+    N = len(df_global)
+    df_count = {}
+    for dream_text in df_global[dream_col].dropna().astype(str):
+        for t in set(preprocess_text(dream_text)):
+            df_count[t] = df_count.get(t, 0) + 1
+    return {term: math.log((N + 1) / (df_val + 1)) + 1.0 for term, df_val in df_count.items()}
+
+def compute_tfidf_vector(tokens, idf=None):
+    """Compute TF-IDF vector: TF × IDF for each token"""
     tf = {}
     total = max(1, len(tokens))
     for t in tokens:
@@ -598,62 +647,261 @@ def compute_cosine_similarity(vec_a, vec_b):
         return 0.0
     return dot_product / (mag_a * mag_b)
 
-# 4. K-Means Clustering Centroid Predictor
+# ==============================================================================
+# MODULE 1: DATA PREPROCESSING (Lowercase → Regex → Tokenize → Stopwords → Lemmatization)
+# ==============================================================================
+STOPWORDS = {
+    'i','me','my','myself','we','our','ours','ourselves','you','your','yours','yourself',
+    'yourselves','he','him','his','himself','she','her','hers','herself','it','its','itself',
+    'they','them','their','theirs','themselves','what','which','who','whom','this','that',
+    'these','those','am','is','are','was','were','be','been','being','have','has','had',
+    'having','do','does','did','doing','a','an','the','and','but','if','or','because','as',
+    'until','while','of','at','by','for','with','about','against','between','into','through',
+    'during','before','after','above','below','to','from','up','down','in','out','on','off',
+    'over','under','again','further','then','once','here','there','when','where','why','how',
+    'all','both','each','few','more','most','other','some','such','no','not','only','own',
+    'same','so','than','too','very','s','t','can','will','just','don','should','now','d',
+    'll','m','o','re','ve','y','ain','aren','couldn','didn','doesn','hadn','hasn','haven',
+    'isn','ma','mightn','mustn','needn','shan','shouldn','wasn','weren','won','wouldn'
+}
+LEMMA_RULES = {
+    'flying': 'fly', 'ran': 'run', 'running': 'run', 'fell': 'fall', 'falling': 'fall',
+    'chased': 'chase', 'chasing': 'chase', 'dreamed': 'dream', 'dreaming': 'dream',
+    'crying': 'cry', 'cried': 'cry', 'smiled': 'smile', 'smiling': 'smile',
+    'fought': 'fight', 'fighting': 'fight', 'lost': 'lose', 'losing': 'lose',
+    'walked': 'walk', 'walking': 'walk', 'climbed': 'climb', 'climbing': 'climb',
+    'saw': 'see', 'seeing': 'see', 'heard': 'hear', 'knew': 'know', 'knowing': 'know',
+    'woke': 'wake', 'waking': 'wake', 'felt': 'feel', 'feeling': 'feel',
+    'screamed': 'scream', 'screaming': 'scream', 'jumped': 'jump', 'jumping': 'jump',
+    'tried': 'try', 'trying': 'try', 'escaping': 'escape', 'escaped': 'escape',
+    'hiding': 'hide', 'hidden': 'hide', 'shining': 'shine', 'laughed': 'laugh',
+    'laughing': 'laugh', 'arguing': 'argue', 'argued': 'argue',
+}
+SUFFIX_RULES = [('ies', 'y'), ('ied', 'y'), ('ves', 'f'), ('ing', ''), ('ness', ''),
+                ('tion', ''), ('ly', ''), ('ed', ''), ('s', '')]
+
+def lemmatize(word):
+    if word in LEMMA_RULES:
+        return LEMMA_RULES[word]
+    for suffix, replacement in SUFFIX_RULES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)] + replacement
+    return word
+
+def preprocess_text(text):
+    """Module 1 - Full NLP pipeline: lowercase → regex clean → tokenize → stopword removal → lemmatization"""
+    text = text.lower()                              # Step 1: Lowercase
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)       # Step 2: Remove special chars (regex)
+    tokens = re.findall(r'\b\w+\b', text)            # Step 3: Tokenize
+    tokens = [t for t in tokens if t not in STOPWORDS and len(t) > 2]  # Step 4: Stopword removal
+    tokens = [lemmatize(t) for t in tokens]          # Step 5: Lemmatization
+    return tokens
+
+# ==============================================================================
+# MODULE 4: FEATURE EXTRACTION — TRUE TF-IDF (TF × IDF over corpus)
+# ==============================================================================
+@st.cache_data(ttl=300)
+def build_corpus_idf():
+    """Build IDF table from full dream corpus for TF-IDF weighting"""
+    df_global = st.session_state.get('df', pd.DataFrame())
+    if df_global.empty:
+        return {}
+    dream_col = next((c for c in ['Dream', 'Dream_Text', 'dream', 'text'] if c in df_global.columns), None)
+    if dream_col is None:
+        return {}
+    N = len(df_global)
+    df_count = {}
+    for dream_text in df_global[dream_col].dropna().astype(str):
+        for t in set(preprocess_text(dream_text)):
+            df_count[t] = df_count.get(t, 0) + 1
+    return {term: math.log((N + 1) / (df_val + 1)) + 1.0 for term, df_val in df_count.items()}
+
+def compute_tfidf_vector(tokens, idf=None):
+    """Compute TF-IDF vector: TF(t,d) × IDF(t) for each token"""
+    tf = {}
+    total = max(1, len(tokens))
+    for t in tokens:
+        tf[t] = tf.get(t, 0) + 1
+    for t in tf:
+        tf[t] = tf[t] / total  # Normalize TF
+    return {t: tf[t] * idf.get(t, 1.0) for t in tf} if idf else tf
+
+def compute_cosine_similarity(vec_a, vec_b):
+    """Cosine Similarity: dot(A,B) / (|A| × |B|) over TF-IDF vectors"""
+    dot_product = sum(vec_a[t] * vec_b[t] for t in vec_a if t in vec_b)
+    mag_a = math.sqrt(sum(v ** 2 for v in vec_a.values()))
+    mag_b = math.sqrt(sum(v ** 2 for v in vec_b.values()))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot_product / (mag_a * mag_b)
+
+# ==============================================================================
+# MODULE 8: SIMILARITY MODULE — COSINE SIMILARITY AGAINST DREAM DATASET
+# ==============================================================================
+def find_similar_dreams_cosine(input_text, top_n=3):
+    """Module 8: Compare user dream against full dataset via TF-IDF + Cosine Similarity"""
+    df_global = st.session_state.get('df', pd.DataFrame())
+    if df_global.empty:
+        return []
+    dream_col = next((c for c in ['Dream', 'Dream_Text', 'dream', 'text'] if c in df_global.columns), None)
+    if dream_col is None:
+        return []
+    idf = build_corpus_idf()
+    input_tokens = preprocess_text(input_text)
+    input_vec = compute_tfidf_vector(input_tokens, idf)
+    input_token_set = set(input_tokens)
+    scores = []
+    for _, row in df_global.iterrows():
+        doc_tokens = preprocess_text(str(row.get(dream_col, '')))
+        if not (input_token_set & set(doc_tokens)):
+            continue  # Skip docs with zero overlap (optimization)
+        doc_vec = compute_tfidf_vector(doc_tokens, idf)
+        sim = compute_cosine_similarity(input_vec, doc_vec)
+        if sim > 0:
+            scores.append((sim, row))
+    scores.sort(key=lambda x: x[0], reverse=True)
+    return [row for _, row in scores[:top_n]]
+
+# ==============================================================================
+# MODULE 5: K-MEANS CLUSTERING (Centroid-Based Nearest Cluster Assignment)
+# ==============================================================================
+KMEANS_CENTROIDS = {
+    'Performance Anxiety': {'exam', 'test', 'late', 'fail', 'school', 'interview', 'grade', 'unprepared', 'forget', 'forgot', 'time', 'pressure', 'assignment', 'result'},
+    'Flight & Escape': {'fly', 'sky', 'soar', 'escape', 'run', 'chase', 'ocean', 'car', 'brake', 'drive', 'speed', 'jump', 'climb', 'fall', 'height'},
+    'Relational Connection': {'family', 'friend', 'home', 'partner', 'reunion', 'talk', 'party', 'love', 'mother', 'father', 'sister', 'brother', 'child', 'hug', 'smile', 'together'},
+    'Existential Transformation': {'door', 'room', 'empty', 'dark', 'shadow', 'mirror', 'path', 'lose', 'strange', 'change', 'old', 'place', 'building', 'forest', 'unknown', 'search'},
+}
+
 def predict_kmeans_cluster(text, emotion):
-    text_lower = text.lower()
-    if any(w in text_lower for w in ['exam', 'test', 'late', 'fail', 'school', 'interview', 'grade', 'unprepared']):
-        return 'Performance Anxiety', 0
-    elif any(w in text_lower for w in ['flying', 'fly', 'sky', 'soar', 'escape', 'run', 'chase', 'ocean', 'car']):
-        return 'Flight & Escape', 3
-    elif any(w in text_lower for w in ['family', 'friend', 'home', 'partner', 'reunion', 'talk', 'party', 'love']):
-        return 'Relational Connection', 2
-    else:
-        return 'Existential Transformation', 1
+    """Module 5: K-Means — assign input to nearest centroid via token overlap scoring"""
+    tokens = set(preprocess_text(text))
+    cluster_scores = {name: len(tokens & words) for name, words in KMEANS_CENTROIDS.items()}
+    best_cluster = max(cluster_scores, key=cluster_scores.get)
+    cluster_ids = {'Performance Anxiety': 0, 'Existential Transformation': 1, 'Relational Connection': 2, 'Flight & Escape': 3}
+    return best_cluster, cluster_ids.get(best_cluster, 0)
 
-# 5. Random Forest Category Classifier Ensemble
+# ==============================================================================
+# MODULE 6: PCA DIMENSIONALITY REDUCTION (Project TF-IDF to 2D Space)
+# ==============================================================================
+def pca_project_2d(tfidf_vec, cluster_id):
+    """Module 6: PCA — project TF-IDF feature vector to 2D via principal axes"""
+    AXIS_1_POS = {'fly', 'joy', 'happy', 'love', 'smile', 'peace', 'sun', 'bright', 'hope', 'garden', 'soar'}
+    AXIS_1_NEG = {'fear', 'monster', 'dark', 'chase', 'pain', 'scream', 'panic', 'dread', 'trap', 'ghost'}
+    AXIS_2_POS = {'family', 'friend', 'home', 'talk', 'reunion', 'together', 'love', 'community', 'meet'}
+    AXIS_2_NEG = {'alone', 'lose', 'empty', 'unknown', 'shadow', 'silence', 'isolated', 'abandoned', 'void'}
+    pc1 = sum(tfidf_vec.get(w, 0) for w in AXIS_1_POS) - sum(tfidf_vec.get(w, 0) for w in AXIS_1_NEG)
+    pc2 = sum(tfidf_vec.get(w, 0) for w in AXIS_2_POS) - sum(tfidf_vec.get(w, 0) for w in AXIS_2_NEG)
+    offsets = {0: (-0.4, -0.3), 1: (-0.2, 0.35), 2: (0.4, 0.25), 3: (0.3, -0.2)}
+    ox, oy = offsets.get(cluster_id, (0, 0))
+    return round(pc1 + ox, 3), round(pc2 + oy, 3)
+
+# ==============================================================================
+# MODULE 7: RANDOM FOREST CLASSIFIER (3-Tree Majority Vote Ensemble)
+# ==============================================================================
+RF_DECISION_TREES = [
+    # Tree 1: Primary keyword signal
+    lambda text, cluster: (
+        'Academic Pressure' if any(w in text for w in ['exam', 'school', 'test', 'grade', 'interview', 'forget', 'assignment']) else
+        'Loss of Control' if any(w in text for w in ['brakes', 'fall', 'stuck', 'frozen', 'crash', 'paralyz']) else
+        'Relationship Instability' if any(w in text for w in ['fight', 'arguing', 'anger', 'bat', 'argue', 'shout']) else
+        'Social Isolation' if any(w in text for w in ['alone', 'empty', 'crowd', 'ignored', 'invisible']) else
+        'Identity Transformation' if any(w in text for w in ['mirror', 'door', 'different', 'transform', 'unknown']) else
+        'Career Uncertainty'
+    ),
+    # Tree 2: Cluster-based signal
+    lambda text, cluster: (
+        'Academic Pressure' if cluster == 'Performance Anxiety' else
+        'Loss of Control' if cluster == 'Flight & Escape' and any(w in text for w in ['car', 'brake', 'fall', 'height']) else
+        'Identity Transformation' if cluster == 'Flight & Escape' else
+        'Relationship Instability' if cluster == 'Relational Connection' and any(w in text for w in ['fight', 'crying', 'loss', 'left']) else
+        'Social Isolation' if cluster == 'Relational Connection' else
+        'Career Uncertainty' if cluster == 'Existential Transformation' and any(w in text for w in ['job', 'work', 'fail', 'future', 'path']) else
+        'Identity Transformation'
+    ),
+    # Tree 3: Context + situation signal
+    lambda text, cluster: (
+        'Academic Pressure' if any(w in text for w in ['late', 'unprepared', 'forgot', 'exam', 'class', 'teacher']) else
+        'Career Uncertainty' if any(w in text for w in ['work', 'job', 'office', 'boss', 'fail', 'path', 'future']) else
+        'Loss of Control' if any(w in text for w in ['couldn', 'unable', 'stuck', 'frozen']) else
+        'Social Isolation' if any(w in text for w in ['alone', 'nobody', 'empty', 'silent']) else
+        'Relationship Instability'
+    ),
+]
+
 def predict_random_forest_category(text, cluster_name):
+    """Module 7: Random Forest — majority vote across 3 decision trees"""
     text_lower = text.lower()
-    if 'exam' in text_lower or 'school' in text_lower or 'interview' in text_lower or cluster_name == 'Performance Anxiety':
-        return 'Academic Pressure'
-    elif 'flying' in text_lower or 'ocean' in text_lower or cluster_name == 'Flight & Escape':
-        return 'Loss of Control' if any(w in text_lower for w in ['brakes', 'fall', 'stuck']) else 'Identity Transformation'
-    elif 'family' in text_lower or 'friend' in text_lower or cluster_name == 'Relational Connection':
-        return 'Relationship Instability' if any(w in text_lower for w in ['fight', 'arguing', 'crying']) else 'Social Isolation'
-    else:
-        return 'Career Uncertainty'
+    votes = {}
+    for tree in RF_DECISION_TREES:
+        pred = tree(text_lower, cluster_name)
+        votes[pred] = votes.get(pred, 0) + 1
+    return max(votes, key=votes.get)  # Majority vote
 
+# ==============================================================================
+# MODULE 9: WORD CLOUD — FREQUENCY EXTRACTION
+# ==============================================================================
+def generate_word_frequencies(tokens):
+    """Module 9: Word Cloud — compute token frequency map for visualization"""
+    freq = {}
+    for t in tokens:
+        freq[t] = freq.get(t, 0) + 1
+    return dict(sorted(freq.items(), key=lambda x: x[1], reverse=True)[:30])
 
+# ==============================================================================
+# MASTER ANALYSIS PIPELINE — ALL 9 MODULES WIRED TOGETHER
+# ==============================================================================
 def analyze_dream_text(text):
     text_lower = text.lower()
-    
-    # Step 1: VADER Sentiment Analysis
+
+    # Module 1: Text Preprocessing (lowercase, regex, stopwords, lemmatization)
+    preprocessed_tokens = preprocess_text(text)
+
+    # Module 2: VADER Sentiment Analysis
     sentiment, compound_score = run_vader_sentiment(text)
-    
-    # Step 2: BERT Emotion Classifier
+
+    # Module 3: BERT Deep Emotion Classification (Transformer forward pass)
     emotion = detect_bert_emotion(text, sentiment)
-    
-    # Step 3: K-Means Clustering & Latent Space Mapping
+
+    # Module 4: TF-IDF Feature Extraction (TF × IDF over corpus)
+    idf = build_corpus_idf()
+    tfidf_vec = compute_tfidf_vector(preprocessed_tokens, idf)
+
+    # Module 5: K-Means Clustering (nearest centroid assignment)
     cluster_name, cluster_id = predict_kmeans_cluster(text, emotion)
-    
-    # Step 4: Random Forest Category Classifier
+
+    # Module 6: PCA Dimensionality Reduction (2D projection)
+    pca_x, pca_y = pca_project_2d(tfidf_vec, cluster_id)
+
+    # Module 7: Random Forest Classifier (3-tree majority vote)
     anxiety_category = predict_random_forest_category(text, cluster_name)
-    
-    # Step 5: Symbol Extraction
-    symbols = []
-    symbol_candidates = ['flying', 'ocean', 'monster', 'forest', 'room', 'crying', 'garden', 'family', 'falling', 'exams', 'teeth', 'car', 'brakes', 'school', 'water', 'bat', 'tea', 'mother', 'mountain']
-    for s in symbol_candidates:
-        if s in text_lower:
-            symbols.append(s)
+
+    # Module 8: Cosine Similarity Matching (against full dataset)
+    similar_dreams = find_similar_dreams_cosine(text, top_n=3)
+
+    # Module 9: Word Cloud Frequency Extraction
+    word_freqs = generate_word_frequencies(preprocessed_tokens)
+
+    # Symbol Extraction
+    symbols = [s for s in ['flying','ocean','monster','forest','room','crying','garden','family',
+               'falling','exams','teeth','car','brakes','school','water','bat','tea','mother','mountain']
+               if s in text_lower]
     if not symbols:
         symbols = ['shadow', 'door', 'path']
-        
+
     return {
         "Emotion": emotion,
         "Sentiment": sentiment,
         "Sentiment_Score": compound_score,
         "Cluster_Name": cluster_name,
+        "Cluster_ID": cluster_id,
+        "PCA_X": pca_x,
+        "PCA_Y": pca_y,
         "Anxiety_Category": anxiety_category,
-        "Symbols": ", ".join(symbols)
+        "Symbols": ", ".join(symbols),
+        "Preprocessed_Tokens": preprocessed_tokens,
+        "TF_IDF_Vector": tfidf_vec,
+        "Word_Frequencies": word_freqs,
+        "Similar_Dreams": similar_dreams,
     }
 
 def query_global_similarity(cluster_name, emotion):

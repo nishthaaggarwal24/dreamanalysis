@@ -471,30 +471,61 @@ def evaluate_digital_twin_stage(user_dreams):
 
 import math
 import re
+from collections import Counter
 
 # ==============================================================================
 # ALGORITHM PIPELINE (VADER SENTIMENT, TF-IDF, COSINE SIMILARITY, K-MEANS, BERT, RANDOM FOREST)
+# All lexicons, centroids, and classifiers are built from the actual CSV dataset.
 # ==============================================================================
 
-VADER_LEXICON = {
-    'happy': 2.7, 'joy': 3.1, 'peace': 2.5, 'flying': 2.8, 'sun': 2.2, 'beautiful': 2.9, 'friend': 2.4,
-    'love': 3.2, 'reunion': 2.3, 'calm': 2.1, 'hope': 2.5, 'laugh': 2.6, 'light': 2.0, 'garden': 2.1,
-    'soar': 2.6, 'safe': 2.2, 'warm': 2.0, 'success': 2.8, 'graduated': 2.7, 'family': 2.5, 'bright': 2.1,
-    'fear': -2.8, 'monster': -3.1, 'chase': -2.6, 'dark': -2.2, 'fail': -2.9, 'exam': -2.4, 'falling': -2.7,
-    'stuck': -2.3, 'late': -2.1, 'crying': -2.8, 'pain': -2.9, 'alone': -2.4, 'loss': -2.7, 'dread': -3.2,
-    'paralysis': -2.9, 'teeth': -2.5, 'brakes': -2.4, 'scream': -3.0, 'trap': -2.7, 'ghost': -2.5, 'die': -3.5,
-    'blood': -2.9, 'fight': -2.8, 'angry': -2.7, 'arguing': -2.5, 'abandoned': -2.9, 'panic': -3.1
-}
-VADER_BOOSTERS = {'very': 1.5, 'extremely': 2.0, 'so': 1.3, 'really': 1.4, 'super': 1.5, 'deeply': 1.6, 'highly': 1.4}
-VADER_NEGATIONS = {'not', 'never', 'no', 'neither', 'cannot', "n't", 'without', 'hardly', 'barely'}
+VADER_BOOSTERS = {'very': 1.5, 'extremely': 2.0, 'so': 1.3, 'really': 1.4, 'super': 1.5, 'deeply': 1.6, 'highly': 1.4, 'incredibly': 2.0, 'absolutely': 1.8, 'completely': 1.6}
+VADER_NEGATIONS = {'not', 'never', 'no', 'neither', 'cannot', "n't", 'without', 'hardly', 'barely', 'nothing', 'nowhere'}
+
+@st.cache_data
+def build_vader_lexicon_from_csv():
+    """Build VADER-style sentiment lexicon from actual CSV data: mine top words per Sentiment class,
+    score positive words +2.5 and negative words -2.5 weighted by frequency rank."""
+    df = st.session_state.get('df', pd.DataFrame())
+    if df.empty or 'Dream' not in df.columns or 'Sentiment' not in df.columns:
+        return {}
+    _stop = {'i','me','my','we','our','you','your','he','him','his','she','her','it','its','they','them',
+             'what','which','who','this','that','these','those','am','is','are','was','were','be','been',
+             'being','have','has','had','do','does','did','a','an','the','and','but','if','or','as',
+             'of','at','by','for','with','into','to','from','up','down','in','out','on','over','then',
+             'all','both','few','more','most','some','no','not','only','so','too','very','can','will',
+             'just','now','had','been','also','said','felt','could','would','kept'}
+    def _tok(txt):
+        txt = re.sub(r'[^a-z\s]', ' ', str(txt).lower())
+        return [w for w in txt.split() if w not in _stop and len(w) > 3]
+
+    pos_counter = Counter()
+    neg_counter = Counter()
+    for _, row in df.iterrows():
+        tokens = _tok(row['Dream'])
+        if row['Sentiment'] == 'Positive':
+            pos_counter.update(tokens)
+        elif row['Sentiment'] == 'Negative':
+            neg_counter.update(tokens)
+
+    lexicon = {}
+    pos_top = [w for w, _ in pos_counter.most_common(60) if w not in neg_counter or pos_counter[w] > neg_counter[w] * 1.5]
+    neg_top = [w for w, _ in neg_counter.most_common(60) if w not in pos_counter or neg_counter[w] > pos_counter[w] * 1.5]
+    for rank, word in enumerate(pos_top[:40]):
+        score = round(3.0 - rank * 0.04, 2)  # Top words get higher scores
+        lexicon[word] = max(1.5, score)
+    for rank, word in enumerate(neg_top[:40]):
+        score = round(-(3.0 - rank * 0.04), 2)
+        lexicon[word] = min(-1.5, score)
+    return lexicon
 
 def run_vader_sentiment(text):
+    """VADER Sentiment Analysis using lexicon built from CSV data"""
+    vader_lexicon = build_vader_lexicon_from_csv()
     tokens = re.findall(r'\b\w+\b', text.lower())
     valence_sum = 0.0
-
     for i, token in enumerate(tokens):
-        if token in VADER_LEXICON:
-            val = VADER_LEXICON[token]
+        if token in vader_lexicon:
+            val = vader_lexicon[token]
             if i > 0 and tokens[i-1] in VADER_BOOSTERS:
                 val *= VADER_BOOSTERS[tokens[i-1]]
             if (i > 0 and tokens[i-1] in VADER_NEGATIONS) or (i > 1 and tokens[i-2] in VADER_NEGATIONS):
@@ -524,7 +555,50 @@ def load_bert_emotion_model():
     except Exception:
         return None
 
+@st.cache_data
+def build_emotion_keywords_from_csv():
+    """Build per-emotion keyword sets from actual CSV data (top discriminating words per Emotion class)"""
+    df = st.session_state.get('df', pd.DataFrame())
+    if df.empty or 'Dream' not in df.columns or 'Emotion' not in df.columns:
+        return {}
+    _stop = {'i','me','my','we','our','you','your','he','him','his','she','her','it','its','they','them',
+             'what','which','who','this','that','these','those','am','is','are','was','were','be','been',
+             'being','have','has','had','do','does','did','a','an','the','and','but','if','or','as',
+             'of','at','by','for','with','into','to','from','up','down','in','out','on','over','then',
+             'all','both','few','more','most','some','no','not','only','so','too','very','can','will',
+             'just','now','also','said','felt','could','would','kept','falling','lost','tall','glass'}
+    def _tok(txt):
+        txt = re.sub(r'[^a-z\s]', ' ', str(txt).lower())
+        return [w for w in txt.split() if w not in _stop and len(w) > 3]
+
+    # Count words per emotion
+    emotion_counters = {}
+    total_counter = Counter()
+    for _, row in df.iterrows():
+        emotion = str(row.get('Emotion', ''))
+        if not emotion or emotion == 'nan':
+            continue
+        tokens = _tok(str(row['Dream']))
+        if emotion not in emotion_counters:
+            emotion_counters[emotion] = Counter()
+        emotion_counters[emotion].update(tokens)
+        total_counter.update(tokens)
+
+    # Build discriminating top words per emotion (TF-IDF style: high in emotion, less common overall)
+    keywords = {}
+    for emotion, counter in emotion_counters.items():
+        total_in_emotion = sum(counter.values())
+        scored = {}
+        for word, count in counter.items():
+            tf = count / max(1, total_in_emotion)
+            overall_freq = total_counter[word] / max(1, sum(total_counter.values()))
+            scored[word] = tf / max(overall_freq, 0.001)  # Discriminativeness score
+        top_words = set(w for w, _ in sorted(scored.items(), key=lambda x: x[1], reverse=True)[:30])
+        keywords[emotion] = top_words
+    return keywords
+
 def detect_bert_emotion(text, sentiment):
+    """BERT Transformer emotion classifier with CSV-trained keyword fallback"""
     try:
         bert_pipeline = load_bert_emotion_model()
         if bert_pipeline is not None:
@@ -539,26 +613,17 @@ def detect_bert_emotion(text, sentiment):
     except Exception:
         pass
 
-    # Fallback lexicon if BERT model is still loading
-    text_lower = text.lower()
-    scores = {'Joy': 0, 'Fear': 0, 'Sadness': 0, 'Anger': 0, 'Surprise': 0, 'Disgust': 0}
-    for word in re.findall(r'\b\w+\b', text_lower):
-        if word in ['flying', 'happy', 'sun', 'peace', 'joy', 'friend', 'beautiful', 'light', 'reunion', 'family', 'soar', 'smile']:
-            scores['Joy'] += 2
-        elif word in ['chase', 'monster', 'fear', 'dark', 'falling', 'fail', 'exam', 'stuck', 'late', 'dread', 'scream', 'panic']:
-            scores['Fear'] += 2
-        elif word in ['crying', 'lost', 'alone', 'empty', 'sad', 'pain', 'abandoned', 'loss', 'grief']:
-            scores['Sadness'] += 2
-        elif word in ['fight', 'fighting', 'angry', 'arguing', 'hit', 'bat', 'shout', 'hate', 'enemy']:
-            scores['Anger'] += 2
-        elif word in ['door', 'secret', 'key', 'mirror', 'sudden', 'strange', 'unusual', 'magic', 'discovered']:
-            scores['Surprise'] += 2
-        elif word in ['teeth', 'decay', 'vomit', 'dirty', 'trash', 'rotten', 'sick']:
-            scores['Disgust'] += 2
-    max_emotion = max(scores, key=scores.get)
-    if scores[max_emotion] == 0:
-        max_emotion = 'Joy' if sentiment == 'Positive' else ('Fear' if sentiment == 'Negative' else 'Surprise')
-    return max_emotion
+    # Fallback: use CSV-derived emotion keyword sets
+    emotion_keywords = build_emotion_keywords_from_csv()
+    if emotion_keywords:
+        tokens = set(re.findall(r'\b\w+\b', text.lower()))
+        scores = {emotion: len(tokens & words) for emotion, words in emotion_keywords.items()}
+        best = max(scores, key=scores.get)
+        if scores[best] > 0:
+            return best
+
+    # Last resort fallback based on sentiment
+    return 'Joy' if sentiment == 'Positive' else ('Fear' if sentiment == 'Negative' else 'Surprise')
 
 # ==============================================================================
 # MODULE 1: DATA PREPROCESSING (Lowercase → Regex → Tokenize → Stopwords → Lemmatization)
@@ -763,79 +828,214 @@ def find_similar_dreams_cosine(input_text, top_n=3):
     return [row for _, row in scores[:top_n]]
 
 # ==============================================================================
-# MODULE 5: K-MEANS CLUSTERING (Centroid-Based Nearest Cluster Assignment)
+# MODULE 5: K-MEANS CLUSTERING — Centroids built from actual CSV cluster data
 # ==============================================================================
-KMEANS_CENTROIDS = {
-    'Performance Anxiety': {'exam', 'test', 'late', 'fail', 'school', 'interview', 'grade', 'unprepared', 'forget', 'forgot', 'time', 'pressure', 'assignment', 'result'},
-    'Flight & Escape': {'fly', 'sky', 'soar', 'escape', 'run', 'chase', 'ocean', 'car', 'brake', 'drive', 'speed', 'jump', 'climb', 'fall', 'height'},
-    'Relational Connection': {'family', 'friend', 'home', 'partner', 'reunion', 'talk', 'party', 'love', 'mother', 'father', 'sister', 'brother', 'child', 'hug', 'smile', 'together'},
-    'Existential Transformation': {'door', 'room', 'empty', 'dark', 'shadow', 'mirror', 'path', 'lose', 'strange', 'change', 'old', 'place', 'building', 'forest', 'unknown', 'search'},
-}
+@st.cache_data
+def build_kmeans_centroids_from_csv():
+    """Build K-Means centroids from actual CSV Cluster_Name column —
+    top discriminating words per cluster mined from real dream texts"""
+    df = st.session_state.get('df', pd.DataFrame())
+    if df.empty or 'Dream' not in df.columns or 'Cluster_Name' not in df.columns:
+        return {}
+    _stop = {'i','me','my','we','our','you','your','he','him','his','she','her','it','its','they','them',
+             'what','which','who','this','that','these','those','am','is','are','was','were','be','been',
+             'being','have','has','had','do','does','did','a','an','the','and','but','if','or','as',
+             'of','at','by','for','with','into','to','from','up','down','in','out','on','over','then',
+             'all','both','few','more','most','some','no','not','only','so','too','very','can','will',
+             'just','now','also','said','felt','could','would','kept','falling','lost','tall','glass',
+             'woke','right','hitting','pavement','skyscraper','started','suddenly','winding','steep'}
+    def _tok(txt):
+        txt = re.sub(r'[^a-z\s]', ' ', str(txt).lower())
+        return [w for w in txt.split() if w not in _stop and len(w) > 3]
+
+    cluster_counters = {}
+    total_counter = Counter()
+    for _, row in df.iterrows():
+        cluster = str(row.get('Cluster_Name', ''))
+        if not cluster or cluster == 'nan':
+            continue
+        tokens = _tok(str(row['Dream']))
+        if cluster not in cluster_counters:
+            cluster_counters[cluster] = Counter()
+        cluster_counters[cluster].update(tokens)
+        total_counter.update(tokens)
+
+    centroids = {}
+    for cluster, counter in cluster_counters.items():
+        total_in_cluster = sum(counter.values())
+        scored = {}
+        for word, count in counter.items():
+            tf = count / max(1, total_in_cluster)
+            overall_freq = total_counter[word] / max(1, sum(total_counter.values()))
+            scored[word] = tf / max(overall_freq, 0.001)
+        top_words = set(w for w, _ in sorted(scored.items(), key=lambda x: x[1], reverse=True)[:35])
+        centroids[cluster] = top_words
+    return centroids
 
 def predict_kmeans_cluster(text, emotion):
-    """Module 5: K-Means — assign input to nearest centroid via token overlap scoring"""
+    """Module 5: K-Means — assign input to nearest centroid via token overlap scoring (CSV-derived centroids)"""
+    centroids = build_kmeans_centroids_from_csv()
+    if not centroids:
+        return 'Existential Transformation', 1
     tokens = set(preprocess_text(text))
-    cluster_scores = {name: len(tokens & words) for name, words in KMEANS_CENTROIDS.items()}
+    cluster_scores = {name: len(tokens & words) for name, words in centroids.items()}
     best_cluster = max(cluster_scores, key=cluster_scores.get)
-    cluster_ids = {'Performance Anxiety': 0, 'Existential Transformation': 1, 'Relational Connection': 2, 'Flight & Escape': 3}
-    return best_cluster, cluster_ids.get(best_cluster, 0)
+    # Map cluster name to numeric ID from actual CSV cluster IDs
+    df = st.session_state.get('df', pd.DataFrame())
+    cluster_id_map = {}
+    if not df.empty and 'Cluster_Name' in df.columns and 'Cluster' in df.columns:
+        cluster_id_map = dict(df.groupby('Cluster_Name')['Cluster'].first())
+    cluster_id = int(cluster_id_map.get(best_cluster, 0))
+    return best_cluster, cluster_id
 
 # ==============================================================================
-# MODULE 6: PCA DIMENSIONALITY REDUCTION (Project TF-IDF to 2D Space)
+# MODULE 6: PCA DIMENSIONALITY REDUCTION — axes built from CSV Joy/Fear words
 # ==============================================================================
+@st.cache_data
+def build_pca_axes_from_csv():
+    """Build PCA principal axes from top Joy vs Fear words and Relational vs Existential words in CSV"""
+    df = st.session_state.get('df', pd.DataFrame())
+    _stop = {'i','me','my','we','our','you','your','he','him','his','she','her','it','its','they','them',
+             'what','which','this','that','am','is','are','was','were','be','been','have','has','had',
+             'do','does','did','a','an','the','and','but','if','or','as','of','at','by','for','with',
+             'into','to','from','up','down','in','out','on','then','all','both','few','more','most',
+             'some','no','not','only','so','too','very','can','will','just','now','felt','falling','lost'}
+    def _tok(txt):
+        txt = re.sub(r'[^a-z\s]', ' ', str(txt).lower())
+        return [w for w in txt.split() if w not in _stop and len(w) > 3]
+    if df.empty or 'Emotion' not in df.columns:
+        axis1_pos = {'beautiful','garden','peaceful','happy','friend','flying','free','ocean','light','hope'}
+        axis1_neg = {'brakes','crumbling','teeth','chasing','monster','crying','fear','dark','maze','corridors'}
+        axis2_pos = {'friend','coffee','talking','meeting','family','conversation','together','artist','celebrity'}
+        axis2_neg = {'empty','cold','room','mirror','alone','isolated','shadow','door','nowhere','searching'}
+        return axis1_pos, axis1_neg, axis2_pos, axis2_neg
+
+    joy_words = Counter()
+    fear_words = Counter()
+    rel_words = Counter()
+    exist_words = Counter()
+    for _, row in df.iterrows():
+        tokens = _tok(str(row.get('Dream', '')))
+        emotion = str(row.get('Emotion', ''))
+        cluster = str(row.get('Cluster_Name', ''))
+        if emotion == 'Joy':
+            joy_words.update(tokens)
+        elif emotion == 'Fear':
+            fear_words.update(tokens)
+        if cluster == 'Relational Connection':
+            rel_words.update(tokens)
+        elif cluster == 'Existential Transformation':
+            exist_words.update(tokens)
+
+    axis1_pos = set(w for w, _ in joy_words.most_common(20) if w not in fear_words or joy_words[w] > fear_words[w])
+    axis1_neg = set(w for w, _ in fear_words.most_common(20) if w not in joy_words or fear_words[w] > joy_words[w])
+    axis2_pos = set(w for w, _ in rel_words.most_common(20) if w not in exist_words or rel_words[w] > exist_words[w])
+    axis2_neg = set(w for w, _ in exist_words.most_common(20) if w not in rel_words or exist_words[w] > rel_words[w])
+    return axis1_pos, axis1_neg, axis2_pos, axis2_neg
+
 def pca_project_2d(tfidf_vec, cluster_id):
-    """Module 6: PCA — project TF-IDF feature vector to 2D via principal axes"""
-    AXIS_1_POS = {'fly', 'joy', 'happy', 'love', 'smile', 'peace', 'sun', 'bright', 'hope', 'garden', 'soar'}
-    AXIS_1_NEG = {'fear', 'monster', 'dark', 'chase', 'pain', 'scream', 'panic', 'dread', 'trap', 'ghost'}
-    AXIS_2_POS = {'family', 'friend', 'home', 'talk', 'reunion', 'together', 'love', 'community', 'meet'}
-    AXIS_2_NEG = {'alone', 'lose', 'empty', 'unknown', 'shadow', 'silence', 'isolated', 'abandoned', 'void'}
-    pc1 = sum(tfidf_vec.get(w, 0) for w in AXIS_1_POS) - sum(tfidf_vec.get(w, 0) for w in AXIS_1_NEG)
-    pc2 = sum(tfidf_vec.get(w, 0) for w in AXIS_2_POS) - sum(tfidf_vec.get(w, 0) for w in AXIS_2_NEG)
+    """Module 6: PCA — project TF-IDF feature vector to 2D via CSV-derived principal axes"""
+    axis1_pos, axis1_neg, axis2_pos, axis2_neg = build_pca_axes_from_csv()
+    pc1 = sum(tfidf_vec.get(w, 0) for w in axis1_pos) - sum(tfidf_vec.get(w, 0) for w in axis1_neg)
+    pc2 = sum(tfidf_vec.get(w, 0) for w in axis2_pos) - sum(tfidf_vec.get(w, 0) for w in axis2_neg)
     offsets = {0: (-0.4, -0.3), 1: (-0.2, 0.35), 2: (0.4, 0.25), 3: (0.3, -0.2)}
     ox, oy = offsets.get(cluster_id, (0, 0))
     return round(pc1 + ox, 3), round(pc2 + oy, 3)
 
 # ==============================================================================
-# MODULE 7: RANDOM FOREST CLASSIFIER (3-Tree Majority Vote Ensemble)
+# MODULE 7: RANDOM FOREST — keyword sets built from actual CSV Anxiety_Category data
 # ==============================================================================
-RF_DECISION_TREES = [
-    # Tree 1: Primary keyword signal
-    lambda text, cluster: (
-        'Academic Pressure' if any(w in text for w in ['exam', 'school', 'test', 'grade', 'interview', 'forget', 'assignment']) else
-        'Loss of Control' if any(w in text for w in ['brakes', 'fall', 'stuck', 'frozen', 'crash', 'paralyz']) else
-        'Relationship Instability' if any(w in text for w in ['fight', 'arguing', 'anger', 'bat', 'argue', 'shout']) else
-        'Social Isolation' if any(w in text for w in ['alone', 'empty', 'crowd', 'ignored', 'invisible']) else
-        'Identity Transformation' if any(w in text for w in ['mirror', 'door', 'different', 'transform', 'unknown']) else
-        'Career Uncertainty'
-    ),
-    # Tree 2: Cluster-based signal
-    lambda text, cluster: (
-        'Academic Pressure' if cluster == 'Performance Anxiety' else
-        'Loss of Control' if cluster == 'Flight & Escape' and any(w in text for w in ['car', 'brake', 'fall', 'height']) else
-        'Identity Transformation' if cluster == 'Flight & Escape' else
-        'Relationship Instability' if cluster == 'Relational Connection' and any(w in text for w in ['fight', 'crying', 'loss', 'left']) else
-        'Social Isolation' if cluster == 'Relational Connection' else
-        'Career Uncertainty' if cluster == 'Existential Transformation' and any(w in text for w in ['job', 'work', 'fail', 'future', 'path']) else
-        'Identity Transformation'
-    ),
-    # Tree 3: Context + situation signal
-    lambda text, cluster: (
-        'Academic Pressure' if any(w in text for w in ['late', 'unprepared', 'forgot', 'exam', 'class', 'teacher']) else
-        'Career Uncertainty' if any(w in text for w in ['work', 'job', 'office', 'boss', 'fail', 'path', 'future']) else
-        'Loss of Control' if any(w in text for w in ['couldn', 'unable', 'stuck', 'frozen']) else
-        'Social Isolation' if any(w in text for w in ['alone', 'nobody', 'empty', 'silent']) else
-        'Relationship Instability'
-    ),
-]
+@st.cache_data
+def build_rf_category_keywords_from_csv():
+    """Build anxiety category keyword sets from actual CSV Anxiety_Category column"""
+    df = st.session_state.get('df', pd.DataFrame())
+    if df.empty or 'Dream' not in df.columns or 'Anxiety_Category' not in df.columns:
+        return {}
+    _stop = {'i','me','my','we','our','you','your','he','him','his','she','her','it','its','they','them',
+             'what','which','who','this','that','these','those','am','is','are','was','were','be','been',
+             'being','have','has','had','do','does','did','a','an','the','and','but','if','or','as',
+             'of','at','by','for','with','into','to','from','up','down','in','out','on','over','then',
+             'all','both','few','more','most','some','no','not','only','so','too','very','can','will',
+             'just','now','also','said','felt','could','would','kept','falling','lost','tall','glass',
+             'woke','right','hitting','pavement','skyscraper','started','suddenly','winding','steep'}
+    def _tok(txt):
+        txt = re.sub(r'[^a-z\s]', ' ', str(txt).lower())
+        return [w for w in txt.split() if w not in _stop and len(w) > 3]
+
+    cat_counters = {}
+    total_counter = Counter()
+    for _, row in df.iterrows():
+        cat = str(row.get('Anxiety_Category', ''))
+        if not cat or cat == 'nan':
+            continue
+        tokens = _tok(str(row['Dream']))
+        if cat not in cat_counters:
+            cat_counters[cat] = Counter()
+        cat_counters[cat].update(tokens)
+        total_counter.update(tokens)
+
+    cat_keywords = {}
+    for cat, counter in cat_counters.items():
+        total = sum(counter.values())
+        scored = {w: (count / max(1, total)) / max(total_counter[w] / max(1, sum(total_counter.values())), 0.001)
+                  for w, count in counter.items()}
+        cat_keywords[cat] = [w for w, _ in sorted(scored.items(), key=lambda x: x[1], reverse=True)[:25]]
+    return cat_keywords
 
 def predict_random_forest_category(text, cluster_name):
-    """Module 7: Random Forest — majority vote across 3 decision trees"""
+    """Module 7: Random Forest — 3-tree ensemble majority vote using CSV-derived anxiety category keywords"""
     text_lower = text.lower()
+    cat_keywords = build_rf_category_keywords_from_csv()
+
+    def tree_keyword_signal(txt, kwds):
+        """Vote based on keyword overlap with CSV-mined anxiety category words"""
+        scores = {cat: sum(1 for w in words if w in txt) for cat, words in kwds.items()}
+        return max(scores, key=scores.get) if any(v > 0 for v in scores.values()) else None
+
+    def tree_cluster_signal(txt, cluster):
+        """Vote based on cluster → category mapping derived from CSV"""
+        df = st.session_state.get('df', pd.DataFrame())
+        if df.empty or 'Cluster_Name' not in df.columns or 'Anxiety_Category' not in df.columns:
+            return None
+        cluster_df = df[df['Cluster_Name'] == cluster]
+        if cluster_df.empty:
+            return None
+        return cluster_df['Anxiety_Category'].mode().iloc[0]
+
+    def tree_combined_signal(txt, cluster, kwds):
+        """Vote by combining cluster signal and secondary keyword refinement"""
+        base = tree_cluster_signal(txt, cluster)
+        if not base or not kwds:
+            return base
+        # If base matches and there's strong keyword support for another, switch
+        scores = {cat: sum(1 for w in words if w in txt) for cat, words in kwds.items()}
+        top_cat = max(scores, key=scores.get) if any(v > 0 for v in scores.values()) else base
+        # Only override if top_cat has at least 2 keyword matches
+        return top_cat if scores.get(top_cat, 0) >= 2 else base
+
     votes = {}
-    for tree in RF_DECISION_TREES:
-        pred = tree(text_lower, cluster_name)
-        votes[pred] = votes.get(pred, 0) + 1
-    return max(votes, key=votes.get)  # Majority vote
+    kwds = cat_keywords if cat_keywords else {}
+
+    v1 = tree_keyword_signal(text_lower, kwds)
+    if v1:
+        votes[v1] = votes.get(v1, 0) + 1
+
+    v2 = tree_cluster_signal(text_lower, cluster_name)
+    if v2:
+        votes[v2] = votes.get(v2, 0) + 1
+
+    v3 = tree_combined_signal(text_lower, cluster_name, kwds)
+    if v3:
+        votes[v3] = votes.get(v3, 0) + 1
+
+    if not votes:
+        # Fallback: mode of Anxiety_Category in entire dataset
+        df = st.session_state.get('df', pd.DataFrame())
+        if not df.empty and 'Anxiety_Category' in df.columns:
+            return df['Anxiety_Category'].mode().iloc[0]
+        return 'Career Uncertainty'
+
+    return max(votes, key=votes.get)
 
 # ==============================================================================
 # MODULE 9: WORD CLOUD — FREQUENCY EXTRACTION

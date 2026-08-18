@@ -521,8 +521,37 @@ def run_vader_sentiment(text):
         
     return sentiment, compound
 
-# 2. BERT / Transformer Multi-Class Emotion Classifier Proxy
+# 2. BERT / Transformer Multi-Class Emotion Classifier (PyTorch + Hugging Face Transformers)
+@st.cache_resource
+def load_bert_emotion_model():
+    try:
+        from transformers import pipeline
+        return pipeline('text-classification', model='j-hartmann/emotion-english-distilroberta-base')
+    except Exception:
+        return None
+
 def detect_bert_emotion(text, sentiment):
+    # Execute actual BERT Deep Learning Transformer Model inference
+    try:
+        bert_pipeline = load_bert_emotion_model()
+        if bert_pipeline is not None:
+            results = bert_pipeline(text[:512])  # Forward pass through BERT Transformer
+            if results and len(results) > 0:
+                bert_label = results[0]['label'].lower()
+                label_map = {
+                    'joy': 'Joy',
+                    'fear': 'Fear',
+                    'sadness': 'Sadness',
+                    'anger': 'Anger',
+                    'surprise': 'Surprise',
+                    'disgust': 'Disgust',
+                    'neutral': 'Neutral'
+                }
+                return label_map.get(bert_label, bert_label.capitalize())
+    except Exception:
+        pass
+
+    # Fallback to lexicon distribution if BERT model is initializing
     text_lower = text.lower()
     scores = {'Joy': 0, 'Fear': 0, 'Sadness': 0, 'Anger': 0, 'Surprise': 0, 'Disgust': 0}
     
